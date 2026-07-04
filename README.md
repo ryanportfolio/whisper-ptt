@@ -5,14 +5,12 @@ hotkey, speak, tap again. The transcript is pasted into whatever window is
 focused and left on your clipboard. No cloud, no account, no network after the
 one-time model download.
 
-[![CI](https://github.com/ryanportfoilio/whisper-ptt/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanportfoilio/whisper-ptt/actions/workflows/ci.yml)
+[![CI](https://github.com/ryanportfolio/whisper-ptt/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanportfolio/whisper-ptt/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D6.svg)
 
 ![The dictation flow: tap the hotkey, speak, tap again, and the transcript lands in the focused window](docs/demo.gif)
-
-<sub>*Illustrative animation (drawn with the app's real tray icons) — regenerate with `scripts/make_demo_gif.py`.*</sub>
 
 ## What it is
 
@@ -63,7 +61,21 @@ from-source `pywhispercpp` build pinned to whisper.cpp v1.7.6) is a
 documented future option — not worth the fragility unless CPU latency
 proves too slow for your use.
 
-## Requirements
+## Install
+
+### Portable (easiest — no Python required)
+
+Download `whisper-ptt-<version>-portable-win64.zip` from the
+[latest release](https://github.com/ryanportfolio/whisper-ptt/releases/latest),
+extract it anywhere, and double-click `whisper-ptt.exe`. The `base.en` model
+is bundled, so dictation works offline immediately — nothing else to install.
+
+> Windows SmartScreen may warn on first run because the exe is unsigned:
+> choose **More info → Run anyway**.
+
+### From source
+
+Requirements:
 
 - **Windows** (the hotkey hook, paste/type injection, and autostart are
   Windows-specific).
@@ -71,8 +83,6 @@ proves too slow for your use.
   3.13/3.14 wheels for `ctranslate2` / `onnxruntime`).
 - [**uv**](https://docs.astral.sh/uv/) for the environment and runner.
 - A working input microphone.
-
-## Install
 
 From the project root:
 
@@ -202,6 +212,7 @@ working input device is fine.
 ```powershell
 uv run python -m whisper_ptt --list-devices   # list input audio devices and exit
 uv run python -m whisper_ptt --test-capture   # record ~1.5s from the resolved mic, report level, exit
+uv run python -m whisper_ptt --selftest       # load model + run a dummy decode, exit (no mic needed)
 uv run python -m whisper_ptt --version        # print version and exit
 ```
 
@@ -224,6 +235,26 @@ CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs both suites on
 `windows-latest`, plus an import smoke test, a clean `uv sync` of the pinned
 wheels, and a check that the built wheel packages the example config.
 
+### Portable build and releases
+
+`scripts/build_portable.py` builds the click-and-go zip: a PyInstaller onedir
+app with the `base.en` model bundled next to the exe (fetch it first with
+`scripts/fetch_model.py --to-project base.en`):
+
+```powershell
+uv run --with pyinstaller python scripts\build_portable.py
+```
+
+`whisper-ptt.exe --selftest` smoke-tests a build end-to-end without audio
+hardware: it seeds the config, resolves the bundled model, loads
+CTranslate2, and runs a real decode.
+
+Pushing a `v*` tag runs
+[.github/workflows/release.yml](.github/workflows/release.yml), which builds
+the portable zip, gates on `--selftest`, and publishes the zip + wheel as a
+GitHub release. Trigger it manually (`workflow_dispatch`) for a dry run that
+uploads the zip as a workflow artifact without releasing.
+
 ### Project layout
 
 ```
@@ -239,11 +270,14 @@ src/whisper_ptt/
   sendinput.py    ctypes SendInput Unicode typing fallback
   tray.py         pystray tray + menu
   icons.py        procedural tray-state icons
+packaging/
+  entry.py              PyInstaller entry point for the portable build
 scripts/
   fetch_model.py        bundle the CT2 model (one-time)
   run.ps1               foreground launcher
   install-autostart.ps1 login autostart shortcut
   make_demo_gif.py      regenerate docs/demo.gif
+  build_portable.py     build the portable zip (PyInstaller + bundled model)
 tests/
   test_model_resolution.py  offline-first model-resolution tests
   test_config_persist.py    tray write-through + first-run seeding tests
