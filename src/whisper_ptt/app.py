@@ -21,7 +21,8 @@ from logging.handlers import RotatingFileHandler
 
 from . import __version__
 from .audio import AudioCapture, list_input_devices
-from .config import Config, ModelNotFound, config_dir, config_path, load_config
+from .config import (Config, ModelNotFound, config_dir, config_path,
+                     load_config, save_settings)
 from .hotkey import HotkeyController
 from .output import OutputEmitter
 from .transcriber import Transcriber
@@ -37,6 +38,7 @@ class Engine:
         self.transcriber = Transcriber(cfg)
         self.output = OutputEmitter(cfg)
         self.tray: Tray | None = None
+        self.hotkey: HotkeyController | None = None
 
         self._q: queue.Queue = queue.Queue()
         self._worker: threading.Thread | None = None
@@ -109,12 +111,55 @@ class Engine:
             self._q.put(("stop", None))
 
     # ---- tray callbacks ---------------------------------------------------
+    def _persist(self, values: dict) -> None:
+        """Write tray-changed settings through to config.toml, best-effort.
+
+        A locked or read-only config must not crash the tray thread; the
+        in-memory setting still applies for this run.
+        """
+        try:
+            save_settings(values)
+        except Exception:  # noqa: BLE001
+            log.warning("could not persist %s to config", values, exc_info=True)
+
     def set_mode(self, mode: str) -> None:
         self.cfg.mode = mode
         log.info("mode -> %s", mode)
+        self._persist({"mode": mode})
         # End any in-flight capture cleanly so a mode flip can't orphan it.
         if self._recording:
             self._q.put(("stop", None))
+
+    def set_log_transcripts(self, enabled: bool) -> None:
+        self.cfg.log_transcripts = enabled
+        log.info("log transcripts -> %s", enabled)
+        self._persist({"log_transcripts": enabled})
+
+    def set_hotkey(self, chord: str) -> None:
+        if chord == self.cfg.hotkey:
+            return
+        # Build (and so validate) the replacement hook before tearing down the
+        # working one — a bad chord must leave the current hotkey in place.
+        try:
+            new = HotkeyController(
+                chord, self.on_press, self.on_release,
+                debounce_ms=self.cfg.debounce_ms, suppress=self.cfg.suppress_hotkey)
+        except Exception:  # noqa: BLE001
+            log.exception("invalid hotkey %r; keeping %r", chord, self.cfg.hotkey)
+            self._notify("invalid hotkey",
+                         f"{chord!r} could not be parsed; keeping {self.cfg.hotkey!r}")
+            return
+        # End any in-flight capture: in PTT mode the release event would land
+        # on the stopped listener and never arrive, wedging the recording.
+        if self._recording:
+            self._q.put(("stop", None))
+        if self.hotkey is not None:
+            self.hotkey.stop()
+        new.start()
+        self.hotkey = new
+        self.cfg.hotkey = chord
+        log.info("hotkey -> %s", chord)
+        self._persist({"hotkey": chord})
 
     def request_model_change(self, model: str) -> None:
         if model == self.cfg.model:
@@ -182,7 +227,12 @@ class Engine:
         self._transcribing = True
         try:
             text = self.transcriber.transcribe(audio)
-            log.info("transcript (%d samples): %r", audio.size, text)
+            # Privacy: dictated content reaches the persistent log only by
+            # opt-in; the default records lengths, never words.
+            if self.cfg.log_transcripts:
+                log.info("transcript (%d samples): %r", audio.size, text)
+            else:
+                log.info("transcript: %d samples -> %d chars", audio.size, len(text))
             self.output.emit(text)
         finally:
             self._transcribing = False
@@ -227,6 +277,7 @@ class Engine:
         self.transcriber = new_tr
         self.cfg.model = model
         self.cfg.model_dir = str(cand)
+        self._persist({"model": model})
         self._set_state("idle")
         log.info("model reloaded -> %s", model)
 
@@ -314,25 +365,31 @@ def main() -> int:
         set_mode=engine.set_mode,
         get_model=lambda: cfg.model,
         set_model=engine.request_model_change,
+        get_log_transcripts=lambda: cfg.log_transcripts,
+        set_log_transcripts=engine.set_log_transcripts,
+        get_hotkey=lambda: cfg.hotkey,
+        set_hotkey=engine.set_hotkey,
         on_open_config=engine.open_config,
         on_quit=engine.shutdown,
     )
     engine.tray = tray
 
-    hotkey = HotkeyController(
+    engine.hotkey = HotkeyController(
         cfg.hotkey, engine.on_press, engine.on_release,
         debounce_ms=cfg.debounce_ms, suppress=cfg.suppress_hotkey,
     )
 
     engine.start_worker()
-    hotkey.start()
+    engine.hotkey.start()
     threading.Thread(target=engine.boot, daemon=True, name="boot").start()
 
     try:
         tray.run()  # blocks until Quit
     finally:
         engine.shutdown()
-        hotkey.stop()
+        # engine.hotkey, not a local: a tray hotkey change swaps the controller.
+        if engine.hotkey is not None:
+            engine.hotkey.stop()
     return 0
 
 

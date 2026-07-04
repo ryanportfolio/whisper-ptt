@@ -1,10 +1,14 @@
 # whisper-ptt configuration.
 # On first run this file is copied to %APPDATA%\whisper-ptt\config.toml.
 # Edit that copy (or use the tray "Open config" menu), then restart the app.
+# Changes made from the tray menu (mode, model, settings) are written back
+# into this file automatically, preserving your comments.
 
 # --- Hotkey -----------------------------------------------------------------
 # Global chord that triggers dictation. pynput syntax, '+'-separated.
 # Examples: "`" (backtick), "f9", "ctrl+alt+space", "ctrl+shift+d", "right ctrl"
+# Common choices can also be picked from the tray Settings > Hotkey menu
+# (applies immediately, no restart, and is saved back here).
 hotkey = "`"
 
 # "toggle" = press once to start recording, press again to stop + transcribe.
@@ -84,6 +88,13 @@ restore_delay_ms = 600
 
 # Wait after writing the clipboard before sending Ctrl+V (paste settle).
 paste_settle_ms = 30
+
+# --- Privacy ----------------------------------------------------------------
+# Write the dictated text itself into the log file
+# (%APPDATA%\whisper-ptt\whisper-ptt.log). Off by default: the log records
+# only sample/character counts, never your words. Enable when debugging
+# transcription quality (also togglable from the tray Settings menu).
+log_transcripts = false
 
 # --- Startup ----------------------------------------------------------------
 # Run one dummy transcribe at launch so the first real dictation is warm.

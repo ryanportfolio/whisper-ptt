@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      # Proves the pinned dependency set installs cleanly on a fresh Windows
+      # box from wheels alone (no compiler, no CUDA).
+      - name: Sync environment
+        run: uv sync --extra build
+
+      - name: Run tests
+        run: |
+          uv run python tests/test_model_resolution.py
+          uv run python tests/test_config_persist.py
+
+      # Everything except the model load and live audio is import-safe on a
+      # headless runner; catches broken imports / missing wheels early.
+      - name: Import smoke test
+        run: uv run python -c "import whisper_ptt.app, whisper_ptt.audio, whisper_ptt.hotkey, whisper_ptt.output, whisper_ptt.tray, whisper_ptt.icons, whisper_ptt.sendinput"
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      # The offline-first seeding fix depends on this file shipping in the wheel.
+      - name: Verify wheel packages the example config
+        shell: pwsh
+        run: |
+          $whl = Get-ChildItem dist/*.whl | Select-Object -First 1
+          uv run python -c "import sys, zipfile; names = zipfile.ZipFile(sys.argv[1]).namelist(); sys.exit(0 if 'whisper_ptt/config.example.toml' in names else 1)" $whl.FullName

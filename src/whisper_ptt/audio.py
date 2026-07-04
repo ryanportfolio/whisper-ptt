@@ -72,8 +72,9 @@ class AudioCapture:
         device = self._resolve_device()
         if device is None:
             raise RuntimeError("no input audio device found")
-        # This box's only inputs are WDM-KS, which reject 16 kHz. Open at the
-        # device's native rate and resample to the model rate in stop().
+        # Some devices (WDM-KS pins especially) reject a direct 16 kHz open.
+        # Open at the device's native rate and resample to the model rate in
+        # stop() so any working input device is usable.
         info = sd.query_devices(device)
         self._capture_sr = int(round(info["default_samplerate"])) or self.cfg.sample_rate
         cap_s = getattr(self.cfg, "max_capture_seconds", 0) or 0
