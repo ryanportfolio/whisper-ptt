@@ -47,7 +47,7 @@ Windows SmartScreen may warn on first run because the exe is unsigned:
 choose "More info" -> "Run anyway".
 
 Everything runs locally on your CPU. The app makes no network calls.
-Project: https://github.com/ryanportfoilio/whisper-ptt
+Project: https://github.com/ryanportfolio/whisper-ptt
 """
 
 

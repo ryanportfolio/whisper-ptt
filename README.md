@@ -5,7 +5,7 @@ hotkey, speak, tap again. The transcript is pasted into whatever window is
 focused and left on your clipboard. No cloud, no account, no network after the
 one-time model download.
 
-[![CI](https://github.com/ryanportfoilio/whisper-ptt/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanportfoilio/whisper-ptt/actions/workflows/ci.yml)
+[![CI](https://github.com/ryanportfolio/whisper-ptt/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanportfolio/whisper-ptt/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D6.svg)
@@ -66,7 +66,7 @@ proves too slow for your use.
 ### Portable (easiest — no Python required)
 
 Download `whisper-ptt-<version>-portable-win64.zip` from the
-[latest release](https://github.com/ryanportfoilio/whisper-ptt/releases/latest),
+[latest release](https://github.com/ryanportfolio/whisper-ptt/releases/latest),
 extract it anywhere, and double-click `whisper-ptt.exe`. The `base.en` model
 is bundled, so dictation works offline immediately — nothing else to install.
 
