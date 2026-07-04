@@ -1,0 +1,63 @@
+name: Release
+
+# Pushing a v* tag builds the portable app, smoke-tests the frozen exe
+# end-to-end (--selftest loads the bundled model and runs a real decode),
+# and publishes the zip + wheel as a GitHub release. workflow_dispatch runs
+# the same build as a dry run, uploading the zip as a workflow artifact
+# without creating a release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync environment
+        run: uv sync --extra build
+
+      - name: Fetch base.en model
+        run: uv run python scripts/fetch_model.py --to-project base.en
+
+      - name: Build portable app
+        run: uv run --with pyinstaller python scripts/build_portable.py
+
+      # The exe is windowed (no console), so launch it detached and gate on
+      # the exit code. --selftest exercises config seeding, model resolution
+      # from the bundled models/ dir, CTranslate2 + VAD loading, and a decode.
+      - name: Smoke test frozen exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist/whisper-ptt/whisper-ptt.exe" -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "selftest failed with exit code $($p.ExitCode)" }
+          Write-Host "selftest passed"
+
+      - name: Build wheel
+        run: uv build
+
+      - name: Upload artifact (dry run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-ptt-portable-win64
+          path: dist/*.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" (Get-Item dist/*.zip).FullName (Get-Item dist/*.whl).FullName --title "whisper-ptt $env:GITHUB_REF_NAME" --generate-notes

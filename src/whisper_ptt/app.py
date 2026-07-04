@@ -283,9 +283,13 @@ class Engine:
 
 
 def _setup_logging() -> None:
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
-    # Autostart runs under pythonw.exe (no console), so a stream handler alone
-    # blackholes every log line. Add a rotating file the user can inspect.
+    handlers: list[logging.Handler] = []
+    # Under pythonw.exe / a windowed frozen exe there is no console at all
+    # (sys.stderr is None), so only attach a stream handler when one exists.
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler())
+    # Console-less runs would otherwise blackhole every log line. Add a
+    # rotating file the user can inspect.
     try:
         d = config_dir()
         d.mkdir(parents=True, exist_ok=True)
@@ -308,6 +312,9 @@ def main() -> int:
                         help="list input audio devices and exit")
     parser.add_argument("--test-capture", action="store_true",
                         help="record ~1.5s from the resolved mic, report level, and exit")
+    parser.add_argument("--selftest", action="store_true",
+                        help="load the model, transcribe a dummy tone, and exit; "
+                             "packaging smoke test, needs no audio device")
     parser.add_argument("--version", action="store_true")
     args = parser.parse_args()
 
@@ -318,6 +325,24 @@ def main() -> int:
     if args.list_devices:
         for idx, name in list_input_devices():
             print(f"{idx:>3}  {name}")
+        return 0
+
+    if args.selftest:
+        # End-to-end packaging check: config seeds, the model resolves
+        # locally, CTranslate2/VAD binaries load, and a decode really runs.
+        # Any failure raises -> nonzero exit, so CI can gate on it.
+        # VAD off: it would strip the faint tone to nothing and the decoder
+        # kernels would never execute (same reasoning as warm_start).
+        import numpy as np
+        cfg = replace(load_config(), vad_filter=False)
+        tr = Transcriber(cfg)
+        tr.load()
+        n = cfg.sample_rate // 2
+        t = np.arange(n, dtype=np.float32) / float(cfg.sample_rate)
+        tone = (0.01 * np.sin(2.0 * np.pi * 220.0 * t)).astype(np.float32)
+        text = tr.transcribe(tone)
+        log.info("selftest ok: model=%s, %d samples -> %r", cfg.model, n, text)
+        print(f"selftest ok: model {cfg.model} loaded, {n} samples -> {text!r}")
         return 0
 
     if args.test_capture:

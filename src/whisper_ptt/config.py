@@ -5,12 +5,18 @@ from __future__ import annotations
 import importlib.resources
 import os
 import re
+import sys
 import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
 
-# src/whisper_ptt/config.py -> parents[2] == project root
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# In a frozen (PyInstaller) portable build there is no source checkout; the
+# "project root" is the folder holding the exe, so a bundled models/ directory
+# sits right beside it. From source, parents[2] of src/whisper_ptt/config.py
+# is the repo root.
+_FROZEN = bool(getattr(sys, "frozen", False))
+PROJECT_ROOT = (Path(sys.executable).resolve().parent if _FROZEN
+                else Path(__file__).resolve().parents[2])
 EXAMPLE_CONFIG = PROJECT_ROOT / "config.example.toml"
 
 
