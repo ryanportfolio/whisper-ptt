@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.resources
 import os
-import shutil
+import re
 import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -96,6 +97,11 @@ class Config:
     restore_delay_ms: int = 600
     paste_settle_ms: int = 30
 
+    # Privacy: write the dictated text itself into the persistent log file.
+    # Off by default — the log survives on disk, so only lengths are recorded
+    # unless the user opts in.
+    log_transcripts: bool = False
+
     # Startup
     warm_start: bool = True
 
@@ -163,12 +169,63 @@ def _coerce_device_index(raw) -> int | None:
     return int(raw)
 
 
+def _example_config_bytes() -> bytes | None:
+    """The example config: repo copy first (source run), else the packaged one.
+
+    PROJECT_ROOT only points at a real checkout when running from source; an
+    installed wheel carries config.example.toml inside the package instead
+    (hatch force-include), so seeding works either way.
+    """
+    if EXAMPLE_CONFIG.exists():
+        return EXAMPLE_CONFIG.read_bytes()
+    try:
+        res = importlib.resources.files("whisper_ptt").joinpath("config.example.toml")
+        if res.is_file():
+            return res.read_bytes()
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _toml_scalar(v: object) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def save_settings(values: dict[str, object]) -> None:
+    """Persist key = value pairs into config.toml, preserving comments/layout.
+
+    Rewrites each existing `key = ...` line in place; keys not present are
+    appended. The config is a flat TOML document (no tables), so appending at
+    the end is always top-level.
+    """
+    path = config_path()
+    if not path.exists():
+        config_dir().mkdir(parents=True, exist_ok=True)
+        path.write_bytes(_example_config_bytes() or b"")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    remaining = dict(values)
+    for i, line in enumerate(lines):
+        for key in list(remaining):
+            if re.match(rf"\s*{re.escape(key)}\s*=", line):
+                lines[i] = f"{key} = {_toml_scalar(remaining.pop(key))}"
+                break
+    for key, val in remaining.items():
+        lines.append(f"{key} = {_toml_scalar(val)}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def load_config(seed_if_missing: bool = True) -> Config:
     """Load %APPDATA%\\whisper-ptt\\config.toml, seeding from the example once."""
     path = config_path()
-    if not path.exists() and seed_if_missing and EXAMPLE_CONFIG.exists():
-        config_dir().mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(EXAMPLE_CONFIG, path)
+    if not path.exists() and seed_if_missing:
+        seed = _example_config_bytes()
+        if seed is not None:
+            config_dir().mkdir(parents=True, exist_ok=True)
+            path.write_bytes(seed)
 
     data: dict = {}
     if path.exists():

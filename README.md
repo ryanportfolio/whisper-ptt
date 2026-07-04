@@ -5,9 +5,14 @@ hotkey, speak, tap again. The transcript is pasted into whatever window is
 focused and left on your clipboard. No cloud, no account, no network after the
 one-time model download.
 
+[![CI](https://github.com/Aoh1578/whisper-ptt/actions/workflows/ci.yml/badge.svg)](https://github.com/Aoh1578/whisper-ptt/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D6.svg)
+
+![The dictation flow: tap the hotkey, speak, tap again, and the transcript lands in the focused window](docs/demo.gif)
+
+<sub>*Illustrative animation (drawn with the app's real tray icons) — regenerate with `scripts/make_demo_gif.py`.*</sub>
 
 ## What it is
 
@@ -21,10 +26,16 @@ downloaded, the app never touches the network again.
 
 - **Fully offline** after one model download. No accounts, no telemetry, no
   cloud calls.
+- **Runs on any Windows machine's CPU** — no GPU, CUDA toolkit, or vendor
+  drivers required; every dependency is a prebuilt wheel.
 - **Global hotkey**, push-to-talk *or* toggle, via a low-level `pynput`
-  keyboard hook.
+  keyboard hook — switchable from the tray without a restart.
 - **System tray UI** with procedural idle / recording / transcribing / loading
-  / error icons and a menu to switch mode, swap model, open the config, or quit.
+  / error icons and a menu to switch mode, swap model, toggle settings, open
+  the config, or quit. Tray changes are saved back to the config file.
+- **Private-by-default logging**: the log file records lengths only — the words
+  you dictate are never written to disk unless you opt in (`log_transcripts`,
+  also togglable from the tray Settings menu).
 - **Three output modes**: paste (clipboard + simulated `Ctrl+V`), type (Unicode
   `SendInput` fallback for apps that block paste), or clipboard-only.
 - **Native-rate capture**, resampled to 16 kHz, so any working input device
@@ -34,17 +45,23 @@ downloaded, the app never touches the network again.
   `allow_download`).
 - **Optional silent autostart** at login.
 
-## Why CPU and not the GPU?
+## CPU-only by design
 
-This box has an **AMD Radeon RX 6600 XT**, which has no CUDA. CTranslate2 has no
-Vulkan/DirectML/ROCm backend, and every prebuilt Whisper-Vulkan path currently
-rides whisper.cpp 1.8.x, which has a regression
+Running on the CPU is a feature, not a fallback: it works on **any Windows
+machine** — no GPU required, no CUDA toolkit, no vendor drivers, no
+hardware lock-in. Every dependency installs as a prebuilt wheel, and
+`base.en` int8 transcribes comfortably in real time for dictation on a
+modern multicore desktop.
+
+For the curious, GPU acceleration also isn't currently a realistic option
+for non-NVIDIA hardware: CTranslate2 (the engine under faster-whisper) has
+no Vulkan/DirectML/ROCm backend, and the prebuilt Whisper-Vulkan
+alternatives ride whisper.cpp 1.8.x, which has a regression
 ([ggml-org/whisper.cpp#3455](https://github.com/ggml-org/whisper.cpp/issues/3455))
-that silently falls back to CPU on AMD Vulkan. So GPU acceleration is a mirage
-today. The app ships CPU-only by design. `base.en int8` runs comfortably
-real-time for dictation on a modern multicore desktop. Real AMD-Vulkan accel is
-a documented future opt-in (a from-source `pywhispercpp` build pinned to
-whisper.cpp v1.7.6), not worth the fragility unless CPU latency proves too slow.
+that silently falls back to CPU on AMD Vulkan. A real GPU opt-in (e.g. a
+from-source `pywhispercpp` build pinned to whisper.cpp v1.7.6) is a
+documented future option — not worth the fragility unless CPU latency
+proves too slow for your use.
 
 ## Requirements
 
@@ -91,7 +108,7 @@ A microphone icon appears in the tray. **Tap the `` ` `` (backtick) key** to
 start dictating, speak, **tap `` ` `` again** to stop. The text lands in the
 focused window. (Default is toggle on the backtick key; while the app runs that
 key is reserved for dictation and won't type a literal `` ` ``. Change the key
-or mode in config.)
+or mode from the tray menu — no restart needed — or in config.)
 
 List your input devices: `uv run python -m whisper_ptt --list-devices`
 
@@ -109,11 +126,12 @@ will not fire while an elevated/admin window is focused (see Known limitations).
 
 First run copies `config.example.toml` to
 `%APPDATA%\whisper-ptt\config.toml`. Edit it (or use the tray **Open config**
-menu) and restart. Key settings:
+menu) and restart. Mode, model, and settings changed from the tray menu are
+written back to this file automatically (comments preserved). Key settings:
 
 | Key | Default | Notes |
 |---|---|---|
-| `hotkey` | `` ` `` | global chord (`pynput` syntax); e.g. `f9`, `ctrl+alt+space` |
+| `hotkey` | `` ` `` | global chord (`pynput` syntax); e.g. `f9`, `ctrl+alt+space`. Common choices are also pickable from the tray **Settings > Hotkey** menu |
 | `mode` | `toggle` | `toggle` (tap/tap) or `ptt` (hold) |
 | `suppress_hotkey` | `true` | swallow a single printable hotkey key while running |
 | `model` | `base.en` | or `small.en` (more accurate, ~2x CPU) |
@@ -121,6 +139,7 @@ menu) and restart. Key settings:
 | `max_capture_seconds` | `300` | safety cap; capture auto-stops so an abandoned recording can't grow RAM. `0` = no cap |
 | `output_mode` | `paste` | `paste` \| `type` \| `clipboard-only` |
 | `restore_clipboard` | `false` | transcript is left on the clipboard |
+| `log_transcripts` | `false` | write dictated text to the log file; off = lengths only |
 | `device_index` | default input | set to force a specific mic |
 | `compute_type` | `int8` | `int8_float32` / `float32` for accuracy |
 | `cpu_threads` | `0` (auto) | lower to keep the desktop responsive |
@@ -192,11 +211,18 @@ The test suite is framework-free and needs no network:
 
 ```powershell
 uv run python tests\test_model_resolution.py
+uv run python tests\test_config_persist.py
 ```
 
-It exercises model resolution: the absolute-path escape hatch, data-dir vs.
-repo-fallback discovery and their priority, and the two missing-model outcomes
-(refuse by default vs. download-permitted).
+The first exercises model resolution: the absolute-path escape hatch, data-dir
+vs. repo-fallback discovery and their priority, and the two missing-model
+outcomes (refuse by default vs. download-permitted). The second covers config
+persistence: tray write-through preserving comments, and first-run seeding
+with private logging defaults.
+
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs both suites on
+`windows-latest`, plus an import smoke test, a clean `uv sync` of the pinned
+wheels, and a check that the built wheel packages the example config.
 
 ### Project layout
 
@@ -217,8 +243,10 @@ scripts/
   fetch_model.py        bundle the CT2 model (one-time)
   run.ps1               foreground launcher
   install-autostart.ps1 login autostart shortcut
+  make_demo_gif.py      regenerate docs/demo.gif
 tests/
   test_model_resolution.py  offline-first model-resolution tests
+  test_config_persist.py    tray write-through + first-run seeding tests
 ```
 
 ## Privacy
@@ -227,6 +255,11 @@ whisper-ptt is offline by design. After the one-time model download it makes
 **no network calls**, requires **no account**, and sends **no telemetry**. Your
 audio is captured, transcribed on your own CPU, and discarded. Nothing leaves
 the machine.
+
+The rotating log file records only sample/character counts. The words you
+dictate are never written to disk unless you explicitly enable
+`log_transcripts` (off by default) — useful when debugging transcription
+quality, off the rest of the time.
 
 ## License
 

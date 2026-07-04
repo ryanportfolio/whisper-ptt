@@ -32,6 +32,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/whisper_ptt"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# Ship the example config inside the package so first-run seeding works from
+# an installed wheel, not just a source checkout (see config._example_config_bytes).
+"config.example.toml" = "whisper_ptt/config.example.toml"
+
 [tool.uv]
 # Interpreter pinned to the uv-managed CPython 3.11.15 via .python-version
 # (dodges missing 3.13/3.14 wheels for ctranslate2 / onnxruntime).
