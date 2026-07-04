@@ -12,8 +12,6 @@ one-time model download.
 
 ![The dictation flow: tap the hotkey, speak, tap again, and the transcript lands in the focused window](docs/demo.gif)
 
-<sub>*Illustrative animation (drawn with the app's real tray icons) — regenerate with `scripts/make_demo_gif.py`.*</sub>
-
 ## What it is
 
 A tiny system-tray app that turns your microphone into a global dictation
