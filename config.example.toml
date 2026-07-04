@@ -1,0 +1,90 @@
+# whisper-ptt configuration.
+# On first run this file is copied to %APPDATA%\whisper-ptt\config.toml.
+# Edit that copy (or use the tray "Open config" menu), then restart the app.
+
+# --- Hotkey -----------------------------------------------------------------
+# Global chord that triggers dictation. pynput syntax, '+'-separated.
+# Examples: "`" (backtick), "f9", "ctrl+alt+space", "ctrl+shift+d", "right ctrl"
+hotkey = "`"
+
+# "toggle" = press once to start recording, press again to stop + transcribe.
+# "ptt"    = push-to-talk: hold the chord to record, release to transcribe.
+mode = "toggle"
+
+# For a SINGLE printable-key hotkey (like backtick), the app swallows that key
+# system-wide while running so toggling doesn't type the character into your
+# window. Side effect: you can't type that character anywhere until you quit.
+# Set false to disable (the key will then leak into the focused app). Ignored
+# for multi-key chords (modifiers are never suppressed).
+suppress_hotkey = true
+
+# Ignore a re-trigger within this many milliseconds (debounce chatter/repeat).
+debounce_ms = 50
+
+# --- Speech-to-text ---------------------------------------------------------
+# "base.en" (fast, ~75MB) or "small.en" (more accurate, ~250MB, ~2x CPU),
+# or an absolute path to a CTranslate2-converted model directory.
+model = "base.en"
+
+# Models are discovered automatically as faster-whisper-<model> under, in order:
+#   1. %LOCALAPPDATA%\whisper-ptt\models   (where fetch_model.py writes them)
+#   2. <repo>/models                       (source-run / dev fallback)
+# Fetch once with: python scripts/fetch_model.py base.en
+# model_dir is an optional explicit override; its parent is also searched.
+model_dir = "./models/faster-whisper-base.en"
+
+# Offline invariant. false (default) = if the model isn't found locally, refuse
+# to start and tell you to run fetch_model.py. The app never silently reaches
+# the network. true = permit a one-time HuggingFace download (logged, not silent).
+allow_download = false
+
+# CPU inference precision: "int8" (fastest), "int8_float32", or "float32".
+compute_type = "int8"
+
+# CPU threads for inference. 0 = auto (physical core count).
+# Lower this (e.g. 4) to keep the desktop responsive during transcription.
+cpu_threads = 0
+
+# Transcription language (base.en / small.en are English-only).
+language = "en"
+
+# Decoder beam size. 1 = lowest latency. Raise for marginal accuracy.
+beam_size = 1
+
+# Silero voice-activity-detection silence trim at transcribe time.
+vad_filter = true
+min_silence_duration_ms = 500
+
+# --- Audio ------------------------------------------------------------------
+# Input device index (run `python -m whisper_ptt --list-devices` to see them).
+# Leave empty / null to use the system default WASAPI input.
+device_index = ""
+
+sample_rate = 16000
+
+# Safety cap on a single recording (seconds). Toggle mode has no auto-stop, so
+# a recording you forget to stop would grow memory without bound; at this cap
+# capture auto-stops (tap again to transcribe what was captured). 0 disables.
+max_capture_seconds = 300
+
+# --- Output -----------------------------------------------------------------
+# "paste"          = set clipboard + simulate Ctrl+V into the focused window.
+# "type"           = type the text via SendInput Unicode (apps that block paste).
+# "clipboard-only" = just put the text on the clipboard, inject nothing.
+output_mode = "paste"
+
+# Restore the user's previous clipboard after pasting.
+# Default false: the transcript is LEFT on the clipboard, so you can re-paste it.
+# Set true if you'd rather dictation never clobber your clipboard.
+# NOTE: paste is async. The target app reads the clipboard on its own message
+# loop. If restore fires before that read, the OLD clipboard gets pasted. The
+# delay below is a best-effort guard; raise it if you see wrong pastes.
+restore_clipboard = false
+restore_delay_ms = 600
+
+# Wait after writing the clipboard before sending Ctrl+V (paste settle).
+paste_settle_ms = 30
+
+# --- Startup ----------------------------------------------------------------
+# Run one dummy transcribe at launch so the first real dictation is warm.
+warm_start = true

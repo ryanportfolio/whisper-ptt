@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.log
+*.egg-info/
+build/
+dist/
+# Bundled STT model (fetched via scripts/fetch_model.py; ~75MB, do not commit)
+models/
+# Local scratch
+.tmp/
+# Real runtime config (may hold local device indices/paths); the template
+# config.example.toml stays committed.
+/config.toml
+config.toml
