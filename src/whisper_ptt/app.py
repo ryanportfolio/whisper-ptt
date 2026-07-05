@@ -16,6 +16,7 @@ import queue
 import subprocess
 import sys
 import threading
+import tkinter as tk
 from dataclasses import replace
 from logging.handlers import RotatingFileHandler
 
@@ -27,6 +28,7 @@ from .hotkey import HotkeyController
 from .output import OutputEmitter
 from .transcriber import Transcriber
 from .tray import Tray
+from .window import SettingsWindow
 
 log = logging.getLogger("whisper_ptt")
 
@@ -38,6 +40,7 @@ class Engine:
         self.transcriber = Transcriber(cfg)
         self.output = OutputEmitter(cfg)
         self.tray: Tray | None = None
+        self.window: SettingsWindow | None = None
         self.hotkey: HotkeyController | None = None
 
         self._q: queue.Queue = queue.Queue()
@@ -45,8 +48,14 @@ class Engine:
         self._ready = False
         self._recording = False
         self._transcribing = False  # true while the worker blocks on transcribe
+        self._monitoring = False    # true during a window "Test microphone" run
         self._press_mode = cfg.mode  # mode latched at the start of a press
         self.config_error: str | None = None  # set if config failed to load
+        # Polled by the window (tk thread) for a thread-safe UI refresh; the
+        # worker never touches tkinter directly.
+        self._state_str = "loading"
+        self._last_result = ""
+        self._quitting = False
 
     # ---- lifecycle --------------------------------------------------------
     def start_worker(self) -> None:
@@ -69,6 +78,7 @@ class Engine:
                              self.config_error)
         except ModelNotFound as exc:
             log.error("boot failed: %s", exc)
+            self._last_result = f"model {self.cfg.model} not installed"
             self._notify(
                 f"model {self.cfg.model} not installed",
                 f"Run: python scripts/fetch_model.py {self.cfg.model}")
@@ -78,6 +88,7 @@ class Engine:
             self._set_state("error")
 
     def shutdown(self) -> None:
+        self._quitting = True  # the window poll (tk thread) tears down the root
         self._q.put(("shutdown", None))
         try:
             self.audio.close()
@@ -166,6 +177,16 @@ class Engine:
             return
         self._q.put(("reload", model))
 
+    def set_device(self, index: int | None) -> None:
+        """Change the input device: reopen the capture stream on the worker."""
+        if index == self.cfg.device_index:
+            return
+        self._q.put(("set_device", index))
+
+    def monitor_mic(self, on: bool) -> None:
+        """Gate a transcribe-less capture so the window can show a live level."""
+        self._q.put(("monitor_on" if on else "monitor_off", None))
+
     def open_config(self) -> None:
         path = config_path()
         # Open in Notepad rather than the shell "open" verb: .toml usually has
@@ -179,6 +200,7 @@ class Engine:
 
     # ---- worker -----------------------------------------------------------
     def _set_state(self, state: str) -> None:
+        self._state_str = state  # window polls this on the tk thread
         if self.tray is not None:
             self.tray.set_state(state)
 
@@ -205,14 +227,26 @@ class Engine:
                     self._do_stop() if self._recording else self._do_start()
                 elif cmd == "reload":
                     self._do_reload(arg)
+                elif cmd == "set_device":
+                    self._do_set_device(arg)
+                elif cmd == "monitor_on":
+                    if self._ready and not self._recording and not self._transcribing:
+                        self._monitoring = True
+                        self.audio.start()
+                elif cmd == "monitor_off":
+                    if self._monitoring:
+                        self._monitoring = False
+                        self.audio.stop()  # discard; the test never transcribes
             except Exception:  # noqa: BLE001 — keep the worker alive
                 log.exception("worker error on %s", cmd)
                 self._set_state("error")
                 self._recording = False
+                self._monitoring = False
 
     def _do_start(self) -> None:
         if self._recording:
             return
+        self._monitoring = False  # a real dictation takes over from a mic test
         self._recording = True
         self.audio.start()
         self._set_state("recording")
@@ -226,7 +260,9 @@ class Engine:
             log.warning("no audio captured. Is a microphone connected and enabled? "
                         "Try: python -m whisper_ptt --test-capture / --list-devices")
             # The windowed exe has no console, so a swallowed log leaves the user
-            # staring at a dictation that produced nothing. Surface it on the tray.
+            # staring at a dictation that produced nothing. Surface it on the tray
+            # and in the window's status line.
+            self._last_result = "no audio captured — check the mic"
             self._notify(
                 "no audio captured",
                 "No microphone input detected. Check the mic is connected, "
@@ -244,6 +280,13 @@ class Engine:
             else:
                 log.info("transcript: %d samples -> %d chars", audio.size, len(text))
             self.output.emit(text)
+            # Same privacy split for the on-screen status line.
+            if not text.strip():
+                self._last_result = "no speech detected"
+            elif self.cfg.log_transcripts:
+                self._last_result = f'pasted: "{text.strip()[:50]}"'
+            else:
+                self._last_result = f"pasted {len(text)} chars"
         finally:
             self._transcribing = False
         self._set_state("idle")
@@ -263,6 +306,7 @@ class Engine:
         if cand is None:
             log.error("model %s not installed; run: python scripts/fetch_model.py %s",
                       model, model)
+            self._last_result = f"{model} not installed — kept {self.cfg.model}"
             self._notify(f"model {model} not installed",
                          f"Run: python scripts/fetch_model.py {model}")
             # The engine is still healthy on the current model — return to idle
@@ -281,6 +325,7 @@ class Engine:
                 new_tr.warm_start()
         except Exception:  # noqa: BLE001
             log.exception("model reload to %s failed; keeping %s", model, self.cfg.model)
+            self._last_result = f"could not load {model} — kept {self.cfg.model}"
             self._set_state("idle")
             return
 
@@ -288,8 +333,45 @@ class Engine:
         self.cfg.model = model
         self.cfg.model_dir = str(cand)
         self._persist({"model": model})
+        self._last_result = f"model → {model}"
         self._set_state("idle")
         log.info("model reloaded -> %s", model)
+
+    def _do_set_device(self, index: int | None) -> None:
+        prev = self.cfg.device_index
+        # Drop any in-flight capture/monitor, then reopen on the new device.
+        if self._recording:
+            self._recording = False
+            try:
+                self.audio.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        self._monitoring = False
+        try:
+            self.audio.close()
+        except Exception:  # noqa: BLE001
+            pass
+        self.cfg.device_index = index
+        try:
+            self.audio.open()
+        except Exception:  # noqa: BLE001
+            log.exception("could not open device %s; reverting to %s", index, prev)
+            self.cfg.device_index = prev
+            try:
+                self.audio.open()
+            except Exception:  # noqa: BLE001
+                log.exception("reverting to device %s also failed", prev)
+                self._last_result = "device open failed"
+                self._set_state("error")
+                return
+            self._last_result = f"device {index} unavailable — kept previous"
+            self._set_state("idle")
+            return
+        # config stores an empty string for "system default", an int otherwise.
+        self._persist({"device_index": "" if index is None else index})
+        self._last_result = "input device updated"
+        self._set_state("idle")
+        log.info("input device -> %s", index)
 
 
 def _setup_logging() -> None:
@@ -325,6 +407,9 @@ def main() -> int:
     parser.add_argument("--selftest", action="store_true",
                         help="load the model, transcribe a dummy tone, and exit; "
                              "packaging smoke test, needs no audio device")
+    parser.add_argument("--selftest-ui", action="store_true",
+                        help="build the window + detached tray, pump the loop "
+                             "briefly, and exit 0; GUI construction/threading smoke")
     parser.add_argument("--version", action="store_true")
     args = parser.parse_args()
 
@@ -395,19 +480,57 @@ def main() -> int:
 
     engine = Engine(cfg)
     engine.config_error = config_error
-    tray = Tray(
-        get_mode=lambda: cfg.mode,
+
+    # tkinter must own the main thread and its own mainloop; the tray therefore
+    # runs detached (see docs/superpowers/specs/2026-07-05-settings-window-design).
+    root = tk.Tk()
+    window = SettingsWindow(
+        root,
+        get_state=lambda: engine._state_str,
+        get_last_result=lambda: engine._last_result,
+        get_mode=lambda: engine.cfg.mode,
         set_mode=engine.set_mode,
-        get_model=lambda: cfg.model,
+        get_model=lambda: engine.cfg.model,
         set_model=engine.request_model_change,
-        get_log_transcripts=lambda: cfg.log_transcripts,
+        model_installed=lambda name: engine.cfg.find_local_model(name) is not None,
+        get_hotkey=lambda: engine.cfg.hotkey,
+        set_hotkey=engine.set_hotkey,
+        get_device=lambda: engine.cfg.device_index,
+        set_device=engine.set_device,
+        mic_level=lambda: engine.audio.rms,
+        set_mic_test=engine.monitor_mic,
+        on_open_config=engine.open_config,
+        on_quit=engine.shutdown,
+        should_quit=lambda: engine._quitting,
+    )
+    engine.window = window
+
+    tray = Tray(
+        get_mode=lambda: engine.cfg.mode,
+        set_mode=engine.set_mode,
+        get_model=lambda: engine.cfg.model,
+        set_model=engine.request_model_change,
+        get_log_transcripts=lambda: engine.cfg.log_transcripts,
         set_log_transcripts=engine.set_log_transcripts,
-        get_hotkey=lambda: cfg.hotkey,
+        get_hotkey=lambda: engine.cfg.hotkey,
         set_hotkey=engine.set_hotkey,
         on_open_config=engine.open_config,
         on_quit=engine.shutdown,
+        on_show=window.show,
     )
     engine.tray = tray
+
+    if args.selftest_ui:
+        # Construction + threading smoke: no model load, audio, or hotkey.
+        tray.icon.run_detached()
+        root.after(500, root.destroy)
+        root.mainloop()
+        try:
+            tray.icon.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        print("selftest-ui ok: window + detached tray built and torn down")
+        return 0
 
     engine.hotkey = HotkeyController(
         cfg.hotkey, engine.on_press, engine.on_release,
@@ -418,11 +541,16 @@ def main() -> int:
     engine.hotkey.start()
     threading.Thread(target=engine.boot, daemon=True, name="boot").start()
 
+    tray.icon.run_detached()  # background thread; frees the main thread for tk
     try:
-        tray.run()  # blocks until Quit
+        window.run()  # root.mainloop(); blocks on the main thread until quit
     finally:
         engine.shutdown()
-        # engine.hotkey, not a local: a tray hotkey change swaps the controller.
+        try:
+            tray.icon.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        # engine.hotkey, not a local: a tray/window hotkey change swaps it.
         if engine.hotkey is not None:
             engine.hotkey.stop()
     return 0

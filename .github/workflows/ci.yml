@@ -27,11 +27,12 @@ jobs:
           uv run python tests/test_config_persist.py
           uv run python tests/test_tray_menu.py
           uv run python tests/test_device_resolution.py
+          uv run python tests/test_window.py
 
       # Everything except the model load and live audio is import-safe on a
       # headless runner; catches broken imports / missing wheels early.
       - name: Import smoke test
-        run: uv run python -c "import whisper_ptt.app, whisper_ptt.audio, whisper_ptt.hotkey, whisper_ptt.output, whisper_ptt.tray, whisper_ptt.icons, whisper_ptt.sendinput"
+        run: uv run python -c "import whisper_ptt.app, whisper_ptt.audio, whisper_ptt.hotkey, whisper_ptt.output, whisper_ptt.tray, whisper_ptt.window, whisper_ptt.icons, whisper_ptt.sendinput"
 
       - name: Build wheel
         run: uv build --wheel
