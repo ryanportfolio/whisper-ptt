@@ -9,10 +9,12 @@ touches tkinter, which is not thread-safe.
 from __future__ import annotations
 
 import logging
+import threading
 import tkinter as tk
 from tkinter import ttk
 
 from .audio import list_input_devices
+from .download import MODEL_SIZE
 from .tray import _HOTKEY_CHOICES
 
 log = logging.getLogger("whisper_ptt.window")
@@ -33,6 +35,7 @@ _POLL_MS = 150
 _MIC_TEST_TICK_MS = 100
 _MIC_TEST_TICKS = 30            # ~3 seconds
 _MIC_SIGNAL_RMS = 0.005        # peak RMS above this = a real signal
+_DL_POLL_MS = 200              # poll the download thread's result from the UI
 
 
 class SettingsWindow:
@@ -44,6 +47,7 @@ class SettingsWindow:
                  get_device, set_device,
                  mic_level, set_mic_test,
                  on_open_config, on_quit,
+                 download_model=None,
                  should_quit=lambda: False,
                  list_devices=list_input_devices):
         self.root = root
@@ -62,6 +66,7 @@ class SettingsWindow:
         self._set_mic_test = set_mic_test
         self._on_open_config = on_open_config
         self._on_quit = on_quit
+        self._download_model = download_model
         self._should_quit = should_quit
         self._list_devices = list_devices
 
@@ -69,6 +74,9 @@ class SettingsWindow:
         self._testing = False
         self._test_peak = 0.0
         self._test_ticks = 0
+        self._downloading = False
+        self._dl_name = ""
+        self._dl_result: tuple[str, str] | None = None
 
         root.title("whisper-ptt")
         root.resizable(False, False)
@@ -121,6 +129,14 @@ class SettingsWindow:
                                       state="readonly", width=34)
         self._model_cb.grid(row=0, column=0, sticky="ew")
         self._model_cb.bind("<<ComboboxSelected>>", self._on_model_pick)
+        self._download_btn = ttk.Button(model, text="Download", width=10,
+                                        command=self._on_download, state="disabled")
+        self._download_btn.grid(row=0, column=1, padx=(6, 0))
+        self._dl_bar = ttk.Progressbar(model, mode="indeterminate", length=200)
+        self._dl_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self._dl_bar.grid_remove()  # shown only while a download runs
+        self._model_msg = ttk.Label(model, text="", foreground="#555")
+        self._model_msg.grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         # Mode + hotkey -----------------------------------------------------
         row = ttk.Frame(outer)
@@ -158,6 +174,8 @@ class SettingsWindow:
 
         self._model_cb["values"] = [self._model_label(name) for name, _ in _MODELS]
         self._model_var.set(self._model_label(self._get_model()))
+        if not self._downloading:
+            self._update_download_btn()
 
         self._hotkey_cb["values"] = self._hotkey_values()
         self._hotkey_var.set(self._hotkey_label(self._get_hotkey()))
@@ -218,12 +236,29 @@ class SettingsWindow:
     def _on_model_pick(self, _event=None) -> None:
         name = self._model_from_label(self._model_var.get())
         if not self._model_installed(name):
-            # Keep the working model selected; the offline guard would refuse it.
-            self._model_var.set(self._model_label(self._get_model()))
-            self._last_lbl.config(text=f"{name} is not installed — keeping "
-                                       f"{self._get_model()}.")
+            # Don't switch the engine to a missing model (the offline guard would
+            # refuse it), but leave the box on this pick so the user can Download
+            # it. Only Download reaches the network, and only on an explicit click.
+            self._update_download_btn()
+            if self._download_model is not None:
+                self._model_msg.config(
+                    text=f"{name} not installed — click Download "
+                         f"({MODEL_SIZE.get(name, '')}).", foreground="#b8860b")
+            else:
+                self._model_msg.config(text=f"{name} is not installed.",
+                                       foreground="#b8860b")
             return
+        self._download_btn.config(state="disabled")
+        self._model_msg.config(text="")
         self._set_model(name)
+
+    def _update_download_btn(self) -> None:
+        """Enable Download only for a selected model that isn't installed yet."""
+        name = self._model_from_label(self._model_var.get())
+        can = (self._download_model is not None
+               and not self._downloading
+               and not self._model_installed(name))
+        self._download_btn.config(state="normal" if can else "disabled")
 
     def _on_mode_pick(self) -> None:
         self._set_mode(self._mode_var.get())
@@ -273,6 +308,63 @@ class SettingsWindow:
             self._mic_msg.config(
                 text="✗ No/low signal. Pick a different mic (not an earphone/output) "
                      "or check it is unmuted.", foreground="#c62828")
+
+    # ---- model download ---------------------------------------------------
+    def _on_download(self) -> None:
+        if self._downloading or self._download_model is None:
+            return
+        name = self._model_from_label(self._model_var.get())
+        if self._model_installed(name):
+            return
+        self._downloading = True
+        self._dl_name = name
+        self._dl_result = None
+        self._download_btn.config(state="disabled")
+        self._model_cb.config(state="disabled")
+        self._model_msg.config(
+            text=f"Downloading {name} {MODEL_SIZE.get(name, '')} — one time, "
+                 f"please wait…", foreground="#1565c0")
+        self._dl_bar.grid()
+        self._dl_bar.start(12)
+        threading.Thread(target=self._download_worker, args=(name,),
+                         daemon=True, name="model-download").start()
+        self.root.after(_DL_POLL_MS, self._download_tick)
+
+    def _download_worker(self, name: str) -> None:
+        # Runs off the UI thread; touches only plain attributes the poll reads
+        # (tkinter is not thread-safe, so no widget calls happen here).
+        try:
+            path = self._download_model(name)
+            self._dl_result = ("ok", str(path))
+        except Exception as exc:  # noqa: BLE001 — surfaced in the UI, never crashes
+            log.exception("model download failed: %s", name)
+            self._dl_result = ("err", f"{type(exc).__name__}: {exc}")
+
+    def _download_tick(self) -> None:
+        if self._dl_result is None:
+            self.root.after(_DL_POLL_MS, self._download_tick)
+            return
+        kind, payload = self._dl_result
+        self._downloading = False
+        try:
+            self._dl_bar.stop()
+            self._dl_bar.grid_remove()
+        except Exception:  # noqa: BLE001
+            pass
+        self._model_cb.config(state="readonly")
+        if kind == "ok":
+            # The model now resolves locally: re-tag the choices and switch to it.
+            self._model_cb["values"] = [self._model_label(n) for n, _ in _MODELS]
+            self._model_var.set(self._model_label(self._dl_name))
+            self._model_msg.config(
+                text=f"✓ Downloaded {self._dl_name} — switching to it.",
+                foreground="#2e7d32")
+            self._download_btn.config(state="disabled")
+            self._set_model(self._dl_name)
+        else:
+            self._model_msg.config(text=f"✗ Download failed: {payload}",
+                                   foreground="#c62828")
+            self._update_download_btn()
 
     # ---- live refresh -----------------------------------------------------
     def _poll(self) -> None:
