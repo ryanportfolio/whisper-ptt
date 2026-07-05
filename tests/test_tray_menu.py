@@ -20,7 +20,8 @@ from whisper_ptt.tray import Tray  # noqa: E402
 
 
 def _make_tray(hotkey: str = "`"):
-    state = {"mode": "ptt", "model": "base.en", "log": False, "hotkey": hotkey}
+    state = {"mode": "ptt", "model": "base.en", "log": False, "hotkey": hotkey,
+             "shown": 0}
     tray = Tray(
         get_mode=lambda: state["mode"], set_mode=lambda v: state.update(mode=v),
         get_model=lambda: state["model"], set_model=lambda v: state.update(model=v),
@@ -28,6 +29,7 @@ def _make_tray(hotkey: str = "`"):
         set_log_transcripts=lambda v: state.update(log=v),
         get_hotkey=lambda: state["hotkey"], set_hotkey=lambda v: state.update(hotkey=v),
         on_open_config=lambda: None, on_quit=lambda: None,
+        on_show=lambda: state.update(shown=state["shown"] + 1),
     )
     return tray, state
 
@@ -66,10 +68,20 @@ def test_custom_hotkey_shows_from_config():
     print("ok: a non-curated hotkey appears as its own '(from config)' entry")
 
 
+def test_show_item_is_default_and_fires():
+    tray, state = _make_tray()
+    target = next(i for i in _walk(tray.icon.menu.items) if i.text == "Show whisper-ptt")
+    assert target.default, "Show item must be the tray's default (double-click) action"
+    target(tray.icon)  # action(icon, item) -> on_show
+    assert state["shown"] == 1, state
+    print("ok: 'Show whisper-ptt' is the default item and calls on_show")
+
+
 def main() -> int:
     test_menu_builds_and_realizes()
     test_hotkey_action_sets_value()
     test_custom_hotkey_shows_from_config()
+    test_show_item_is_default_and_fires()
     print("ALL_TRAY_TESTS_OK")
     return 0
 

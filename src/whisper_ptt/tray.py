@@ -34,7 +34,7 @@ class Tray:
     def __init__(self, *, get_mode, set_mode, get_model, set_model,
                  get_log_transcripts, set_log_transcripts,
                  get_hotkey, set_hotkey,
-                 on_open_config, on_quit):
+                 on_open_config, on_quit, on_show=lambda: None):
         self._get_mode = get_mode
         self._set_mode = set_mode
         self._get_model = get_model
@@ -45,6 +45,7 @@ class Tray:
         self._set_hotkey = set_hotkey
         self._on_open_config = on_open_config
         self._on_quit = on_quit
+        self._on_show = on_show
         self._state = "loading"
         self.icon = pystray.Icon(
             "whisper-ptt",
@@ -86,6 +87,10 @@ class Tray:
             hotkey_entries.insert(0, hotkey_item(current, f"{current} (from config)"))
 
         return Menu(
+            # default=True -> a double-click on the tray icon reopens the window.
+            MenuItem("Show whisper-ptt", lambda icon, item: self._on_show(),
+                     default=True),
+            Menu.SEPARATOR,
             MenuItem("Mode", Menu(
                 mode_item("ptt", "Push-to-talk"),
                 mode_item("toggle", "Toggle"),
