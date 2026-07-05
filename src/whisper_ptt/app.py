@@ -24,6 +24,7 @@ from . import __version__
 from .audio import AudioCapture, list_input_devices
 from .config import (Config, ModelNotFound, config_dir, config_path,
                      load_config, save_settings)
+from .download import download_model
 from .hotkey import HotkeyController
 from .output import OutputEmitter
 from .transcriber import Transcriber
@@ -501,6 +502,7 @@ def main() -> int:
         set_mic_test=engine.monitor_mic,
         on_open_config=engine.open_config,
         on_quit=engine.shutdown,
+        download_model=download_model,
         should_quit=lambda: engine._quitting,
     )
     engine.window = window

@@ -75,6 +75,10 @@ def _run_pyinstaller(ico: Path) -> None:
         "--collect-all", "faster_whisper",
         "--collect-all", "ctranslate2",
         "--collect-binaries", "onnxruntime",
+        # In-app model download (settings window "Download") needs huggingface_hub's
+        # lazily imported submodules and a TLS cert bundle inside the frozen exe.
+        "--collect-all", "huggingface_hub",
+        "--collect-data", "certifi",
         # Backends these libs load dynamically (invisible to import analysis).
         "--hidden-import", "pystray._win32",
         "--hidden-import", "pynput.keyboard._win32",

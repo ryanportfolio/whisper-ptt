@@ -26,6 +26,11 @@ def _make(root):
     installed = {"base.en": True, "small.en": False}
     state = {"state": "idle", "last": "", "mode": "toggle", "model": "base.en",
              "hotkey": "`", "device": None, "level": 0.0}
+
+    def fake_download(name):
+        installed[name] = True  # emulate a completed fetch making it resolvable
+        return f"C:/models/faster-whisper-{name}"
+
     win = SettingsWindow(
         root,
         get_state=lambda: state["state"],
@@ -43,11 +48,12 @@ def _make(root):
         set_mic_test=lambda on: calls["mic_test"].append(on),
         on_open_config=lambda: None,
         on_quit=lambda: calls.__setitem__("quit", calls["quit"] + 1),
+        download_model=fake_download,
         should_quit=lambda: False,
         list_devices=lambda: [(1, "EPOS Mic"),
                               (15, "Headset Microphone (EPOS IMPACT 60)")],
     )
-    return win, calls
+    return win, calls, installed
 
 
 def main() -> int:
@@ -58,7 +64,7 @@ def main() -> int:
         return 0
     root.withdraw()  # never flash a real window during the test
     try:
-        win, calls = _make(root)
+        win, calls, installed = _make(root)
         root.update()  # realize widgets; 150ms poll hasn't elapsed, so it's inert
 
         vals = list(win._model_cb["values"])
@@ -73,12 +79,25 @@ def main() -> int:
         assert calls["device"] is None, calls
         print("ok: device picker maps label -> index / None")
 
-        # An uninstalled model must not switch (offline guard) and must revert.
+        # An uninstalled model must not switch the engine (offline guard), but
+        # the box stays on the pick and Download turns on.
         win._model_var.set(win._model_label("small.en"))
         win._on_model_pick()
         assert calls["model"] is None, calls
-        assert win._model_var.get() == win._model_label("base.en")
-        print("ok: uninstalled model selection is refused and reverts")
+        assert "small.en" in win._model_var.get(), win._model_var.get()
+        assert str(win._download_btn.cget("state")) == "normal", win._download_btn.cget("state")
+        print("ok: uninstalled model enables Download, does not switch engine")
+
+        # Drive a completed download directly (worker + tick, no real thread):
+        # it flips installed, re-tags, and auto-switches to the new model.
+        win._downloading = True
+        win._dl_name = "small.en"
+        win._download_worker("small.en")   # fake_download makes it "installed"
+        win._download_tick()
+        assert installed["small.en"] is True
+        assert calls["model"] == "small.en", calls
+        assert not win._downloading
+        print("ok: completed download installs + auto-selects the model")
 
         win._model_var.set(win._model_label("base.en"))
         win._on_model_pick()
