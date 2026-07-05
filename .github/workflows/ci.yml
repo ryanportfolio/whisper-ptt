@@ -25,6 +25,7 @@ jobs:
         run: |
           uv run python tests/test_model_resolution.py
           uv run python tests/test_config_persist.py
+          uv run python tests/test_tray_menu.py
 
       # Everything except the model load and live audio is import-safe on a
       # headless runner; catches broken imports / missing wheels early.

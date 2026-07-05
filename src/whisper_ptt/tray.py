@@ -73,7 +73,7 @@ class Tray:
         def hotkey_item(value, label):
             return MenuItem(
                 label,
-                lambda icon, item, v=value: self._set_hotkey(v),
+                lambda icon, item: self._set_hotkey(value),
                 checked=lambda item, v=value: self._get_hotkey() == v,
                 radio=True,
             )
