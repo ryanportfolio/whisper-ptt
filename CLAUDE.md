@@ -55,6 +55,7 @@ Overrides the Bash tool's built-in "commit only when asked" default: task comple
 - Branch, never main. If on main, create a feature branch first.
 - Stage intentionally. Never blanket-commit unrelated changes.
 - Open/update a PR after pushing. A merged branch's PR is closed → a reused branch needs a fresh PR.
+- **Auto-release on completion (standing user authorization).** When a user-facing fix or feature merges to `main`, also ship it — without asking: bump the version in BOTH `pyproject.toml` and `src/whisper_ptt/__init__.py` (the portable-zip name and in-app version derive from it), then `git tag -a vX.Y.Z <main-sha> -m ... && git push origin vX.Y.Z`. The `v*` tag triggers `.github/workflows/release.yml` to build, smoke-test, and publish the portable exe. The user always wants the downloadable exe, so this bullet is the explicit standing authorization for that otherwise outward-facing publish. Skip only for changes with no user-facing exe difference (docs, internal refactor, CI-only). Never delete a non-broken prior release; GitHub marks the newest as Latest.
 - Never force-push or run destructive git operations without an explicit request.
 - "Complete" = the requested change finished and verified to this environment's limits. Mid-task or exploratory work is NOT a commit trigger.
 - End commit messages with the standard `Co-Authored-By:` trailer.
