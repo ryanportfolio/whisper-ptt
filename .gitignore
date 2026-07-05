@@ -13,3 +13,7 @@ models/
 # config.example.toml stays committed.
 /config.toml
 config.toml
+
+# Claude Code: per-machine settings + local worktrees
+.claude/settings.local.json
+.claude/worktrees/
