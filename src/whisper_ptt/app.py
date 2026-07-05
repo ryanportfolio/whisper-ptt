@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import queue
+import subprocess
 import sys
 import threading
 from dataclasses import replace
@@ -168,9 +168,13 @@ class Engine:
 
     def open_config(self) -> None:
         path = config_path()
+        # Open in Notepad rather than the shell "open" verb: .toml usually has
+        # no committed default handler, so os.startfile pops Windows' "how do
+        # you want to open this file?" chooser every launch. Notepad ships on
+        # every Windows box and opens the config directly, with no picker.
         try:
-            os.startfile(str(path))  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001
+            subprocess.Popen(["notepad.exe", str(path)])
+        except OSError:
             log.warning("could not open config at %s", path)
 
     # ---- worker -----------------------------------------------------------
