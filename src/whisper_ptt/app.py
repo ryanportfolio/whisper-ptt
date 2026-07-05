@@ -225,6 +225,12 @@ class Engine:
         if audio.size == 0:
             log.warning("no audio captured. Is a microphone connected and enabled? "
                         "Try: python -m whisper_ptt --test-capture / --list-devices")
+            # The windowed exe has no console, so a swallowed log leaves the user
+            # staring at a dictation that produced nothing. Surface it on the tray.
+            self._notify(
+                "no audio captured",
+                "No microphone input detected. Check the mic is connected, "
+                "unmuted, and set as the default recording device in Windows.")
             self._set_state("idle")
             return
         self._set_state("transcribing")

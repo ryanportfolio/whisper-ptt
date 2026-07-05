@@ -38,16 +38,34 @@ class AudioCapture:
     # plugged in, only WDM-KS pins enumerate at all and they deliver nothing.
     _API_PREFERENCE = ("MME", "Windows WASAPI", "Windows DirectSound", "Windows WDM-KS")
 
+    @staticmethod
+    def _is_input_device(index: int) -> bool:
+        """True only if `index` names a real capture device (>0 input channels).
+
+        Guards against a stale index (PortAudio indices shift as devices come
+        and go) or an output device: opening an InputStream on one succeeds but
+        then delivers zero frames, which reads as silent-no-capture downstream.
+        """
+        try:
+            return int(sd.query_devices(index)["max_input_channels"]) > 0
+        except Exception:  # noqa: BLE001 — bad/out-of-range index -> not usable
+            return False
+
     def _resolve_device(self) -> int | None:
         """config override -> PortAudio default -> first input by API preference."""
+        # Honor a pinned index only if it can actually capture; otherwise fall
+        # through to auto-resolution instead of opening a dead stream.
         if self.cfg.device_index is not None:
-            return self.cfg.device_index
+            if self._is_input_device(self.cfg.device_index):
+                return self.cfg.device_index
+            log.warning("device_index=%s is not a usable input device; using the "
+                        "system default input instead", self.cfg.device_index)
 
         try:
             default_in = sd.default.device[0]
         except Exception:  # noqa: BLE001
             default_in = -1
-        if isinstance(default_in, int) and default_in >= 0:
+        if isinstance(default_in, int) and self._is_input_device(default_in):
             return default_in
 
         hostapis = sd.query_hostapis()
