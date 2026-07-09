@@ -85,3 +85,11 @@ Topical reference lives in `.claude/reference/`. Consult BEFORE non-trivial work
 New quirk bites → `/recall save <text>`.
 
 Stays in this file: cross-cutting safety/process rules. Moves out: anything area-specific. Don't bloat the kernel.
+
+## Codex compatibility
+
+Claude Code remains the primary runtime and `.claude/skills/` remains canonical.
+After adding, removing, or editing a skill or `skillOverrides`, run
+`node .claude/scripts/sync-codex-skills.mjs --write` and include the generated
+`.agents/skills/` changes. Do not hand-edit generated adapters; `AGENTS.md` owns
+Codex-specific runtime safety and tool translation.
